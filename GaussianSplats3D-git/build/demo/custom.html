@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  <title>Custom 3D Gaussian Splat Viewer</title>
+  <script type="text/javascript" src="js/util.js"></script>
+  <script type="importmap">
+    {
+        "imports": {
+            "three": "./lib/three.module.js",
+            "@mkkellogg/gaussian-splats-3d": "./lib/gaussian-splats-3d.module.js"
+        }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #000000;
+      margin: 0;
+      overflow: hidden;
+      height: 100vh;
+    }
+    #container {
+      width: 100%;
+      height: 100%;
+    }
+    .loading-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background-color: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+    }
+    .loading-text {
+      color: white;
+      font-family: Arial, sans-serif;
+      margin-top: 20px;
+    }
+    .loading-spinner {
+      width: 50px;
+      height: 50px;
+      border: 5px solid #f3f3f3;
+      border-top: 5px solid #3498db;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    #fov-info {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      color: white;
+      background-color: rgba(0, 0, 0, 0.5);
+      padding: 5px 10px;
+      border-radius: 3px;
+      font-family: Arial, sans-serif;
+      display: none;
+    }
+    #file-upload-container {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background-color: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 15px;
+      border-radius: 5px;
+      font-family: Arial, sans-serif;
+      z-index: 1000;
+      max-width: 250px;
+    }
+    .file-upload-group {
+      margin-bottom: 15px;
+    }
+    .file-upload-label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    .file-upload-input {
+      margin-bottom: 5px;
+      width: 100%;
+    }
+    .file-info {
+      font-size: 0.8em;
+      color: #aaa;
+      margin-top: 2px;
+    }
+    .camera-dropdown {
+      width: 100%;
+      margin-top: 10px;
+      padding: 5px;
+      background-color: #333;
+      color: white;
+      border: 1px solid #666;
+      display: none;
+    }
+    #load-scene-button {
+      margin-top: 15px;
+      padding: 8px 12px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 100%;
+      font-weight: bold;
+    }
+    #load-scene-button:hover {
+      background-color: #2980b9;
+    }
+    #load-scene-button:disabled {
+      background-color: #777;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <div id="container"></div>
+  <div id="loading-ui" class="loading-container">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Loading scene...</div>
+  </div>
+  <div id="fov-info">Focal adjustment: <span id="fov-value">1.000</span></div>
+
+  <div id="file-upload-container">
+    <div class="file-upload-group">
+      <label class="file-upload-label">Splat PLY File:</label>
+      <input type="file" id="ply-file-input" class="file-upload-input" accept=".ply">
+      <div id="ply-file-info" class="file-info">No file selected</div>
+    </div>
+    
+    <div class="file-upload-group">
+      <label class="file-upload-label">Camera JSON:</label>
+      <input type="file" id="camera-file-input" class="file-upload-input" accept=".json">
+      <div id="camera-file-info" class="file-info">No file selected</div>
+    </div>
+    
+    <div class="file-upload-group">
+      <label class="file-upload-label">Cameras JSON (optional):</label>
+      <input type="file" id="cameras-file-input" class="file-upload-input" accept=".json">
+      <div id="cameras-file-info" class="file-info">No file selected</div>
+      <div class="file-info" style="color: #aaddff;">Contains camera trajectory data (for reference only - does not affect view)</div>
+      <select id="camera-select" class="camera-dropdown">
+        <option value="">Select a camera...</option>
+      </select>
+    </div>
+    
+    <button id="load-scene-button" disabled>Load Scene</button>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
+
+    // Default camera parameters (will be overridden by loaded camera.json)
+    let cameraData = {
+      "id": 1804,
+      "position": [0.3791540265083313, -0.07669593393802643, 1.0701225996017456],
+      "rotation": [
+        [0.6794247627258301, -0.7302279472351074, 0.07175742834806442],
+        [0.155307799577713, 0.23870103061199188, 0.9585934281349182],
+        [-0.7171202898025513, -0.6401476263999939, 0.2755894958972931]
+      ],
+      "fx": 720.0,
+      "fy": 720.0
+    };
+
+    // Default 85 degree FOV
+    const DEFAULT_FOV = 85;
+    
+    // File inputs references
+    const plyFileInput = document.getElementById('ply-file-input');
+    const cameraFileInput = document.getElementById('camera-file-input');
+    const camerasFileInput = document.getElementById('cameras-file-input');
+    
+    // File info elements
+    const plyFileInfo = document.getElementById('ply-file-info');
+    const cameraFileInfo = document.getElementById('camera-file-info');
+    const camerasFileInfo = document.getElementById('cameras-file-info');
+    
+    // Camera selection dropdown
+    const cameraSelect = document.getElementById('camera-select');
+    
+    // Load button
+    const loadSceneButton = document.getElementById('load-scene-button');
+    
+    // Variables to store the loaded files and data
+    let plyFile = null;
+    let camerasData = null;
+    
+    // Set up event listeners for file inputs
+    plyFileInput.addEventListener('change', (event) => {
+      if (event.target.files.length > 0) {
+        plyFile = event.target.files[0];
+        plyFileInfo.textContent = `Selected: ${plyFile.name} (${formatFileSize(plyFile.size)})`;
+        updateLoadButtonState();
+      } else {
+        plyFile = null;
+        plyFileInfo.textContent = 'No file selected';
+        updateLoadButtonState();
+      }
+    });
+    
+    cameraFileInput.addEventListener('change', (event) => {
+      if (event.target.files.length > 0) {
+        const file = event.target.files[0];
+        cameraFileInfo.textContent = `Selected: ${file.name} (${formatFileSize(file.size)})`;
+        
+        // Read and parse the camera.json file
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            cameraData = JSON.parse(e.target.result);
+            console.log('Camera data loaded:', cameraData);
+            updateLoadButtonState();
+          } catch (error) {
+            console.error('Error parsing camera JSON:', error);
+            cameraFileInfo.textContent = 'Error: Invalid JSON format';
+          }
+        };
+        reader.readAsText(file);
+      } else {
+        cameraFileInfo.textContent = 'No file selected';
+        updateLoadButtonState();
+      }
+    });
+    
+    camerasFileInput.addEventListener('change', (event) => {
+      if (event.target.files.length > 0) {
+        const file = event.target.files[0];
+        camerasFileInfo.textContent = `Selected: ${file.name} (${formatFileSize(file.size)})`;
+        
+        // Read and parse the cameras.json file
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            camerasData = JSON.parse(e.target.result);
+            console.log('Cameras data loaded, count:', camerasData.length);
+            
+            // Populate the camera selection dropdown
+            populateCameraDropdown(camerasData);
+          } catch (error) {
+            console.error('Error parsing cameras JSON:', error);
+            camerasFileInfo.textContent = 'Error: Invalid JSON format';
+            camerasData = null;
+            cameraSelect.style.display = 'none';
+          }
+        };
+        reader.readAsText(file);
+      } else {
+        camerasFileInfo.textContent = 'No file selected';
+        camerasData = null;
+        cameraSelect.style.display = 'none';
+      }
+    });
+    
+    // Camera selection change handler
+    cameraSelect.addEventListener('change', (event) => {
+      const selectedIndex = event.target.value;
+      if (selectedIndex !== '' && camerasData && camerasData[selectedIndex]) {
+        // Update the camera data with the selected camera
+        cameraData = camerasData[selectedIndex];
+        console.log('Selected camera:', cameraData);
+      }
+    });
+    
+    // Load scene button click handler
+    loadSceneButton.addEventListener('click', () => {
+      // Hide the file upload UI
+      document.getElementById('file-upload-container').style.display = 'none';
+      
+      // Show loading UI
+      document.getElementById('loading-ui').style.display = 'flex';
+      
+      // Initialize and load the scene
+      initializeViewer();
+    });
+    
+    // Helper functions
+    function updateLoadButtonState() {
+      loadSceneButton.disabled = !(plyFile && cameraData);
+    }
+    
+    function formatFileSize(size) {
+      if (size < 1024) return size + ' B';
+      else if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
+      else if (size < 1024 * 1024 * 1024) return (size / (1024 * 1024)).toFixed(1) + ' MB';
+      else return (size / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+    }
+    
+    function populateCameraDropdown(cameras) {
+      if (!Array.isArray(cameras) || cameras.length === 0) {
+        cameraSelect.style.display = 'none';
+        return;
+      }
+      
+      // Hide the dropdown since we're using cameras.json as a trajectory reference
+      cameraSelect.style.display = 'none';
+      
+      // Just log that we've loaded the cameras data without overriding the camera.json
+      console.log('Cameras trajectory data loaded with', cameras.length, 'points (for reference only)');
+      
+      // Do NOT override the camera data from camera.json
+      // We're only storing the cameras data for reference
+    }
+    
+    // Function to initialize the viewer and load the scene
+    function initializeViewer() {
+      // Conversion from COLMAP rotation matrix to Three.js camera parameters
+      function calculateCameraParams(cameraData) {
+        // Get the camera forward direction from the third row of the rotation matrix
+        const forwardX = cameraData.rotation[2][0];
+        const forwardY = 0;
+        const forwardZ = cameraData.rotation[2][2];
+        
+        // Create the look-at point directly using these components
+        const lookAt = [forwardX, forwardY, forwardZ];
+        
+        // Keep the same up vector (negative Y) which is correct
+        const up = [0, -1, 0];
+        
+        console.log("Camera position:", cameraData.position);
+        console.log("Calculated look-at from rotation matrix:", lookAt);
+        console.log("Up vector:", up);
+        
+        return {
+          position: cameraData.position,
+          lookAt: lookAt,
+          up: up,
+          fx: cameraData.fx,
+          fy: cameraData.fy
+        };
+      }
+
+      const cameraParams = calculateCameraParams(cameraData);
+      
+      console.log("Setting default FOV to:", DEFAULT_FOV);
+      
+      // Initialize the viewer with proper settings
+      const viewer = new GaussianSplats3D.Viewer({
+        'cameraUp': cameraParams.up,
+        'initialCameraPosition': cameraParams.position,
+        'initialCameraLookAt': cameraParams.lookAt,
+        'cameraFov': DEFAULT_FOV,
+        'selfDrivenMode': true,
+        'useBuiltInControls': true,
+        'rootElement': document.getElementById('container'),
+        'sharedMemoryForWorkers': false,
+        'inMemoryCompressionLevel': 0
+      });
+
+      // Hide loading UI when the scene is loaded
+      function hideLoadingUI() {
+        document.getElementById('loading-ui').style.display = 'none';
+      }
+      
+      // Load the splat scene from the uploaded file
+      const fileReader = new FileReader();
+      fileReader.onload = function(event) {
+        const arrayBuffer = event.target.result;
+        
+        // Create a blob URL for the file
+        const blob = new Blob([arrayBuffer]);
+        const objectURL = URL.createObjectURL(blob);
+        
+        // Load the splat scene
+        viewer.addSplatScene(objectURL, {
+          'splatAlphaRemovalThreshold': 5,
+          'showLoadingUI': true,
+          'onProgress': (progress) => {
+            console.log(`Loading progress: ${progress * 100}%`);
+          },
+          'format': GaussianSplats3D.SceneFormat.Ply  // Explicitly set the format to PLY
+        })
+        .then(() => {
+          console.log('Scene loaded successfully!');
+          hideLoadingUI();
+          
+          // Directly set FOV on the camera to make sure it's applied
+          if (viewer.camera && viewer.camera.isPerspectiveCamera) {
+            viewer.camera.fov = DEFAULT_FOV;
+            viewer.camera.updateProjectionMatrix();
+            console.log("Camera FOV explicitly set to:", viewer.camera.fov);
+          }
+          
+          viewer.start();
+          
+          // Function to modify FOV
+          function setFOV(fov) {
+            if (viewer.camera && viewer.camera.isPerspectiveCamera) {
+              viewer.camera.fov = fov;
+              viewer.camera.updateProjectionMatrix();
+              console.log("FOV changed to:", fov);
+              
+              // Force an update of the info panel if it's visible
+              if (viewer.infoPanel && viewer.infoPanel.visible) {
+                updateInfoPanel();
+              }
+              
+              viewer.forceRenderNextFrame();
+              return true;
+            }
+            return false;
+          }
+          
+          // Function to update the info panel with FOV information
+          function updateInfoPanel() {
+            if (!viewer.infoPanel) return;
+            
+            // Get the info panel element
+            const infoPanelElement = document.querySelector('.info-panel');
+            if (!infoPanelElement) return;
+            
+            // Check if our FOV line already exists
+            let fovLine = infoPanelElement.querySelector('.fov-line');
+            if (!fovLine) {
+              // Create a new line for FOV
+              fovLine = document.createElement('div');
+              fovLine.className = 'info-panel-line fov-line';
+              infoPanelElement.appendChild(fovLine);
+            }
+            
+            // Update the FOV line content
+            if (viewer.camera && viewer.camera.isPerspectiveCamera) {
+              fovLine.textContent = `FOV: ${viewer.camera.fov.toFixed(1)}°`;
+            }
+          }
+          
+          // Override the InfoPanel's show method to add our FOV line
+          if (viewer.infoPanel) {
+            const originalShow = viewer.infoPanel.show;
+            viewer.infoPanel.show = function() {
+              originalShow.call(viewer.infoPanel);
+              setTimeout(updateInfoPanel, 0);
+            };
+          }
+          
+          // Add keyboard handler for [ and ] keys to change FOV
+          window.addEventListener('keydown', (event) => {
+            if (event.key === '[') {
+              // Decrease FOV (zoom in)
+              if (viewer.camera && viewer.camera.isPerspectiveCamera) {
+                const newFOV = Math.max(10, viewer.camera.fov - 5);
+                setFOV(newFOV);
+              }
+            } else if (event.key === ']') {
+              // Increase FOV (zoom out)
+              if (viewer.camera && viewer.camera.isPerspectiveCamera) {
+                const newFOV = Math.min(120, viewer.camera.fov + 5);
+                setFOV(newFOV);
+              }
+            } else if (event.key === 'i' || event.key === 'I') {
+              // When the info panel is toggled with the I key, update our FOV display
+              setTimeout(updateInfoPanel, 10);
+            }
+          });
+          
+          // Initial update of the info panel if it's already showing
+          if (viewer.showInfo) {
+            setTimeout(updateInfoPanel, 100);
+          }
+        })
+        .catch((error) => {
+          console.error('Error loading scene:', error);
+          hideLoadingUI();
+          document.getElementById('container').innerHTML = `<div style="color: white; padding: 20px;">Error loading scene: ${error.message}</div>`;
+        })
+        .finally(() => {
+          // Clean up the object URL
+          URL.revokeObjectURL(objectURL);
+        });
+      };
+      
+      fileReader.readAsArrayBuffer(plyFile);
+    }
+  </script>
+</body>
+</html> 
