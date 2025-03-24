@@ -4,38 +4,85 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gaussian Splats 3D Viewer</title>
-    <meta http-equiv="refresh" content="0; url=GaussianSplats3D/build/demo/custom.html">
     <style>
         body {
             font-family: Arial, sans-serif;
             margin: 20px;
             line-height: 1.6;
+            background-color: #f5f5f5;
+            color: #333;
         }
         .container {
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
         h1 {
             color: #333;
+            text-align: center;
+            margin-bottom: 30px;
         }
         p {
             margin-bottom: 15px;
         }
-        a {
-            color: #0066cc;
+        .viewer-link {
+            display: block;
+            background-color: #0066cc;
+            color: white;
+            text-align: center;
+            padding: 15px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-weight: bold;
+            margin: 30px 0;
+            transition: background-color 0.3s;
+        }
+        .viewer-link:hover {
+            background-color: #004c99;
             text-decoration: none;
         }
-        a:hover {
-            text-decoration: underline;
+        .instructions {
+            background-color: #f9f9f9;
+            padding: 15px;
+            border-left: 4px solid #0066cc;
+            margin: 20px 0;
+        }
+        code {
+            background-color: #f0f0f0;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: monospace;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Gaussian Splats 3D Viewer</h1>
-        <p>Redirecting to the viewer...</p>
-        <p>If you are not redirected automatically, <a href="GaussianSplats3D/build/demo/custom.html">click here</a>.</p>
+        
+        <p>Welcome to the Gaussian Splats 3D Viewer project. This tool allows you to visualize 3D Gaussian splatting models with a user-friendly interface.</p>
+        
+        <a href="https://helionaut.github.io/GaussianSplats3D/build/demo/custom.html" class="viewer-link">Launch 3D Viewer</a>
+        
+        <div class="instructions">
+            <h2>Deployment Instructions</h2>
+            <p>To view this project:</p>
+            <ol>
+                <li>Clone the GaussianSplats3D repository to a separate GitHub repository</li>
+                <li>Enable GitHub Pages for that repository</li>
+                <li>The viewer will be available at: <code>https://[your-username].github.io/GaussianSplats3D/build/demo/custom.html</code></li>
+            </ol>
+            <p>For local viewing:</p>
+            <ol>
+                <li>Navigate to the GaussianSplats3D directory</li>
+                <li>Run <code>npm run demo</code></li>
+                <li>Access the viewer at <code>http://127.0.0.1:8080/custom.html</code></li>
+            </ol>
+        </div>
+        
+        <p>This project uses <a href="https://github.com/mkkellogg/GaussianSplats3D">mkkellogg's GaussianSplats3D</a> implementation.</p>
     </div>
 </body>
 </html> 
