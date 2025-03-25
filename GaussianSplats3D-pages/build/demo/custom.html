@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="x-ua-compatible" content="ie=edge">
-  <title>Custom 3D Gaussian Splat Viewer</title>
+  <title>Custom 3D Gaussian Splat Viewer with Camera Visualization</title>
   <script type="text/javascript" src="js/util.js"></script>
   <script type="importmap">
     {
@@ -95,15 +95,6 @@
       color: #aaa;
       margin-top: 2px;
     }
-    .camera-dropdown {
-      width: 100%;
-      margin-top: 10px;
-      padding: 5px;
-      background-color: #333;
-      color: white;
-      border: 1px solid #666;
-      display: none;
-    }
     #load-scene-button {
       margin-top: 15px;
       padding: 8px 12px;
@@ -121,6 +112,42 @@
     #load-scene-button:disabled {
       background-color: #777;
       cursor: not-allowed;
+    }
+    #camera-controls {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background-color: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 15px;
+      border-radius: 5px;
+      font-family: Arial, sans-serif;
+      z-index: 1000;
+      max-width: 250px;
+    }
+    .camera-control-option {
+      margin-bottom: 10px;
+    }
+    .camera-toggle-button {
+      padding: 8px 12px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 100%;
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    .camera-toggle-button:hover {
+      background-color: #2980b9;
+    }
+    .camera-toggle-button.active {
+      background-color: #27ae60;
+    }
+    .camera-size-slider {
+      width: 100%;
+      margin-top: 5px;
     }
   </style>
 </head>
@@ -149,13 +176,21 @@
       <label class="file-upload-label">Cameras JSON (optional):</label>
       <input type="file" id="cameras-file-input" class="file-upload-input" accept=".json">
       <div id="cameras-file-info" class="file-info">No file selected</div>
-      <div class="file-info" style="color: #aaddff;">Contains camera trajectory data (for reference only - does not affect view)</div>
-      <select id="camera-select" class="camera-dropdown">
-        <option value="">Select a camera...</option>
-      </select>
+      <div class="file-info" style="color: #aaddff;">Contains camera trajectory data (will be visualized as spheres)</div>
     </div>
     
     <button id="load-scene-button" disabled>Load Scene</button>
+  </div>
+  
+  <div id="camera-controls" style="display: none;">
+    <div class="camera-control-option">
+      <button id="toggle-cameras-button" class="camera-toggle-button active">Show Cameras</button>
+    </div>
+    <div class="camera-control-option">
+      <label class="file-upload-label">Camera Size:</label>
+      <input type="range" id="camera-size-slider" class="camera-size-slider" min="0.005" max="0.1" step="0.001" value="0.02">
+      <div id="camera-size-value" class="file-info">0.02</div>
+    </div>
   </div>
 
   <script type="module">
@@ -188,15 +223,21 @@
     const cameraFileInfo = document.getElementById('camera-file-info');
     const camerasFileInfo = document.getElementById('cameras-file-info');
     
-    // Camera selection dropdown
-    const cameraSelect = document.getElementById('camera-select');
-    
-    // Load button
-    const loadSceneButton = document.getElementById('load-scene-button');
+    // Camera controls
+    const cameraControls = document.getElementById('camera-controls');
+    const toggleCamerasButton = document.getElementById('toggle-cameras-button');
+    const cameraSizeSlider = document.getElementById('camera-size-slider');
+    const cameraSizeValue = document.getElementById('camera-size-value');
     
     // Variables to store the loaded files and data
     let plyFile = null;
     let camerasData = null;
+    let cameraGroup = null;
+    let cameraSpheres = [];
+    let showCameras = true;
+    let cameraSize = 0.02;
+    let viewer = null;
+    let colorLegend = null;
     
     // Set up event listeners for file inputs
     plyFileInput.addEventListener('change', (event) => {
@@ -246,33 +287,21 @@
           try {
             camerasData = JSON.parse(e.target.result);
             console.log('Cameras data loaded, count:', camerasData.length);
-            
-            // Populate the camera selection dropdown
-            populateCameraDropdown(camerasData);
           } catch (error) {
             console.error('Error parsing cameras JSON:', error);
             camerasFileInfo.textContent = 'Error: Invalid JSON format';
             camerasData = null;
-            cameraSelect.style.display = 'none';
           }
         };
         reader.readAsText(file);
       } else {
         camerasFileInfo.textContent = 'No file selected';
         camerasData = null;
-        cameraSelect.style.display = 'none';
       }
     });
     
-    // Camera selection change handler
-    cameraSelect.addEventListener('change', (event) => {
-      const selectedIndex = event.target.value;
-      if (selectedIndex !== '' && camerasData && camerasData[selectedIndex]) {
-        // Update the camera data with the selected camera
-        cameraData = camerasData[selectedIndex];
-        console.log('Selected camera:', cameraData);
-      }
-    });
+    // Load button
+    const loadSceneButton = document.getElementById('load-scene-button');
     
     // Load scene button click handler
     loadSceneButton.addEventListener('click', () => {
@@ -284,6 +313,25 @@
       
       // Initialize and load the scene
       initializeViewer();
+    });
+    
+    // Camera controls handlers
+    toggleCamerasButton.addEventListener('click', () => {
+      showCameras = !showCameras;
+      if (cameraGroup) {
+        cameraGroup.visible = showCameras;
+      }
+      if (colorLegend) {
+        colorLegend.style.display = showCameras ? 'block' : 'none';
+      }
+      toggleCamerasButton.classList.toggle('active', showCameras);
+      toggleCamerasButton.textContent = showCameras ? 'Hide Cameras' : 'Show Cameras';
+    });
+    
+    cameraSizeSlider.addEventListener('input', (event) => {
+      cameraSize = parseFloat(event.target.value);
+      cameraSizeValue.textContent = cameraSize.toFixed(3);
+      updateCameraSize();
     });
     
     // Helper functions
@@ -298,20 +346,226 @@
       else return (size / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
     }
     
-    function populateCameraDropdown(cameras) {
-      if (!Array.isArray(cameras) || cameras.length === 0) {
-        cameraSelect.style.display = 'none';
+    function updateCameraSize() {
+      if (cameraSpheres.length > 0) {
+        cameraSpheres.forEach(sphere => {
+          sphere.scale.set(cameraSize, cameraSize, cameraSize);
+        });
+      }
+    }
+    
+    // Function to create camera visualization
+    function createCameraVisualization(cameras) {
+      if (!cameras || !Array.isArray(cameras) || cameras.length === 0) {
+        console.log('No cameras data available for visualization');
         return;
       }
       
-      // Hide the dropdown since we're using cameras.json as a trajectory reference
-      cameraSelect.style.display = 'none';
+      console.log(`Creating visualization for ${cameras.length} cameras`);
       
-      // Just log that we've loaded the cameras data without overriding the camera.json
-      console.log('Cameras trajectory data loaded with', cameras.length, 'points (for reference only)');
+      // Extract the frame numbers from filenames
+      const cameraFrameNumbers = [];
       
-      // Do NOT override the camera data from camera.json
-      // We're only storing the cameras data for reference
+      // Extract numbers from image filenames
+      cameras.forEach(camera => {
+        if (!camera.img_name) return;
+        
+        // Extract the number from file name (e.g., "006805" from "/opt/roadar_data/colmap_c/images/10/006805.jpg")
+        const match = camera.img_name.match(/\/([0-9]+)\/([0-9]+)\.jpg$/);
+        if (match && match[2]) {
+          const frameNumber = parseInt(match[2], 10);
+          cameraFrameNumbers.push({
+            camera: camera,
+            frameNumber: frameNumber
+          });
+          
+          // Debug: Log first few extracted numbers
+          if (cameraFrameNumbers.length <= 5) {
+            console.log(`Extracted frame number ${frameNumber} from ${camera.img_name}`);
+          }
+        } else {
+          // If no number found, still include camera but with -1 as frame number
+          cameraFrameNumbers.push({
+            camera: camera,
+            frameNumber: -1
+          });
+          
+          // Debug: Log files that failed to match
+          console.log(`Failed to extract frame number from ${camera.img_name}`);
+        }
+      });
+      
+      // Debug log for min/max
+      console.log(`Found ${cameraFrameNumbers.length} cameras with frame numbers`);
+      
+      // Sort cameras by frame number
+      cameraFrameNumbers.sort((a, b) => a.frameNumber - b.frameNumber);
+      
+      // Find min and max frame numbers for normalization
+      let minFrameNumber = Number.MAX_VALUE;
+      let maxFrameNumber = Number.MIN_VALUE;
+      
+      cameraFrameNumbers.forEach(item => {
+        if (item.frameNumber >= 0) { // Only consider valid frame numbers
+          minFrameNumber = Math.min(minFrameNumber, item.frameNumber);
+          maxFrameNumber = Math.max(maxFrameNumber, item.frameNumber);
+        }
+      });
+      
+      console.log(`Frame number range: ${minFrameNumber} to ${maxFrameNumber}`);
+      
+      // Add the camera visualization directly to the DOM
+      const container = document.getElementById('container');
+      
+      // Create a scene for camera objects
+      const cameraScene = new THREE.Scene();
+      
+      // Create a group to hold all camera objects
+      cameraGroup = new THREE.Group();
+      cameraScene.add(cameraGroup);
+      
+      // Camera sphere geometry
+      const sphereGeometry = new THREE.SphereGeometry(1, 16, 16);
+      
+      // Create spheres for each camera with a color gradient
+      cameraFrameNumbers.forEach((item, index) => {
+        const camera = item.camera;
+        if (!camera.position) return;
+        
+        // Calculate normalized position in sequence based on frame number
+        let gradientPosition = 0;
+        
+        if (item.frameNumber >= 0 && maxFrameNumber > minFrameNumber) {
+          gradientPosition = (item.frameNumber - minFrameNumber) / (maxFrameNumber - minFrameNumber);
+        } else {
+          // Fallback to index if no valid frame number
+          gradientPosition = index / (cameraFrameNumbers.length - 1);
+        }
+        
+        // Create gradient color (blue to red through green/yellow)
+        const color = new THREE.Color();
+        
+        // HSL gradient - start from blue (240°), go through green/cyan/yellow to red (0°)
+        color.setHSL(
+          (1 - gradientPosition) * 0.6, // 0.6 = 240° (blue) to 0 (red) in hue
+          0.8, // Saturation
+          0.5  // Lightness
+        );
+        
+        // Create material with the gradient color
+        const sphereMaterial = new THREE.MeshBasicMaterial({ 
+          color: color,
+          transparent: true,
+          opacity: 0.8
+        });
+        
+        const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+        
+        // Set position from camera data
+        sphere.position.set(
+          camera.position[0],
+          camera.position[1],
+          camera.position[2]
+        );
+        
+        // Scale the sphere
+        sphere.scale.set(cameraSize, cameraSize, cameraSize);
+        
+        // Add frame number as user data for potential tooltip/info display
+        sphere.userData = { frameNumber: item.frameNumber };
+        
+        // Add to group
+        cameraGroup.add(sphere);
+        cameraSpheres.push(sphere);
+      });
+      
+      // Add custom info to the scene for the color gradient legend
+      const legendContainer = document.createElement('div');
+      legendContainer.id = 'color-legend';
+      legendContainer.style.position = 'absolute';
+      legendContainer.style.bottom = '10px';
+      legendContainer.style.right = '10px';
+      legendContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+      legendContainer.style.color = 'white';
+      legendContainer.style.padding = '10px';
+      legendContainer.style.borderRadius = '5px';
+      legendContainer.style.fontFamily = 'Arial, sans-serif';
+      legendContainer.style.zIndex = '1000';
+      
+      // Store reference to legend
+      colorLegend = legendContainer;
+      
+      // Create gradient legend
+      const gradientBar = document.createElement('div');
+      gradientBar.style.width = '150px';
+      gradientBar.style.height = '20px';
+      gradientBar.style.marginBottom = '5px';
+      gradientBar.style.background = 'linear-gradient(to right, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000)';
+      gradientBar.style.borderRadius = '3px';
+      
+      // Add labels
+      const labelContainer = document.createElement('div');
+      labelContainer.style.display = 'flex';
+      labelContainer.style.justifyContent = 'space-between';
+      
+      const startLabel = document.createElement('div');
+      startLabel.textContent = minFrameNumber.toString();
+      startLabel.style.fontSize = '12px';
+      
+      const endLabel = document.createElement('div');
+      endLabel.textContent = maxFrameNumber.toString();
+      endLabel.style.fontSize = '12px';
+      
+      labelContainer.appendChild(startLabel);
+      labelContainer.appendChild(endLabel);
+      
+      // Add elements to legend container
+      legendContainer.appendChild(gradientBar);
+      legendContainer.appendChild(labelContainer);
+      
+      // Add legend to DOM
+      container.appendChild(legendContainer);
+      
+      // Create renderer for camera objects
+      const renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true
+      });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setClearColor(0x000000, 0);
+      renderer.setPixelRatio(window.devicePixelRatio);
+      
+      // Position overlay canvas
+      renderer.domElement.style.position = 'absolute';
+      renderer.domElement.style.top = '0';
+      renderer.domElement.style.left = '0';
+      renderer.domElement.style.pointerEvents = 'none';
+      renderer.domElement.style.zIndex = '1';
+      container.appendChild(renderer.domElement);
+      
+      // Show the camera controls
+      cameraControls.style.display = 'block';
+      
+      // Set initial visibility
+      cameraGroup.visible = showCameras;
+      
+      // Animation function that syncs with viewer's camera
+      function animate() {
+        if (viewer && viewer.camera && cameraGroup.visible) {
+          renderer.render(cameraScene, viewer.camera);
+        }
+        requestAnimationFrame(animate);
+      }
+      
+      // Start animation loop
+      animate();
+      
+      // Handle window resize
+      window.addEventListener('resize', () => {
+        if (renderer) {
+          renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+      });
     }
     
     // Function to initialize the viewer and load the scene
@@ -347,7 +601,7 @@
       console.log("Setting default FOV to:", DEFAULT_FOV);
       
       // Initialize the viewer with proper settings
-      const viewer = new GaussianSplats3D.Viewer({
+      viewer = new GaussianSplats3D.Viewer({
         'cameraUp': cameraParams.up,
         'initialCameraPosition': cameraParams.position,
         'initialCameraLookAt': cameraParams.lookAt,
@@ -385,6 +639,11 @@
         .then(() => {
           console.log('Scene loaded successfully!');
           hideLoadingUI();
+          
+          // Add camera visualization if cameras data is available
+          if (camerasData && camerasData.length > 0) {
+            createCameraVisualization(camerasData);
+          }
           
           // Directly set FOV on the camera to make sure it's applied
           if (viewer.camera && viewer.camera.isPerspectiveCamera) {
